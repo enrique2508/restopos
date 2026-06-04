@@ -684,19 +684,30 @@ function showApp(){
   navigate((SCREENS[userRole]||SCREENS.mesero)[0].id);
   if(['cocina','admin'].includes(userRole)){
     let lastPedidoCount = 0;
+    let lastPedidoIds = new Set();
+
     kitchenTimer=setInterval(async ()=>{
-      if(currentScreen==='cocina'){
-        const {data} = await sb.from('pedidos').select('id').not('status','in','("entregado","cerrado")');
-        const newCount = data?.length || 0;
-        if(newCount > lastPedidoCount && lastPedidoCount > 0){
+      // Always check for new pedidos regardless of screen
+      const {data} = await sb.from('pedidos')
+        .select('id,mesas(numero)')
+        .not('status','in','("entregado","cerrado")');
+
+      const currentIds = new Set((data||[]).map(p=>p.id));
+      const newPedidos = (data||[]).filter(p => !lastPedidoIds.has(p.id));
+
+      if(newPedidos.length > 0 && lastPedidoIds.size > 0){
+        newPedidos.forEach(p => {
           Sounds.play('pedido');
-          Notif.show('🍽️ Nuevo pedido', 'Hay un nuevo pedido en cocina', '🔥');
-          Notif.flashTab('Nuevo pedido');
-        }
-        lastPedidoCount = newCount;
-        renderCocina();
+          Notif.show('🍽️ NUEVO PEDIDO', `Mesa ${p.mesas?.numero} — nuevo pedido en cocina`, '🔥');
+          Notif.flashTab('Nuevo pedido Mesa ' + p.mesas?.numero);
+          showBanner(`🍽️ Nuevo pedido — Mesa ${p.mesas?.numero}`, 'gold');
+        });
       }
-    }, 15000);
+      lastPedidoIds = currentIds;
+
+      // Re-render cocina if on that screen
+      if(currentScreen==='cocina') renderCocina();
+    }, 8000);
   }
 }
 
@@ -1013,7 +1024,7 @@ async function renderCocina(){
   c.innerHTML=`<div class="sec-head"><h2>🔥 Cocina</h2><span style="background:var(--bg3);border-radius:20px;padding:3px 11px;font-size:12px;font-weight:600;color:var(--gold)">${pedidos.length} pendiente${pedidos.length!==1?'s':''}</span></div><div class="kitchen-list" id="kitchen-list"></div><div style="padding:0 14px 8px"><div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 8px;border-top:1px solid var(--bg4)"><span style="font-family:var(--font);font-size:13px;font-weight:700;color:var(--text2)">📋 Historial de hoy</span></div><div id="historial-cocina"></div></div>`;
   // Load historial
   const hoy=new Date().toISOString().split('T')[0];
-  const {data:historial}=await sb.from('pedidos').select('*,mesas(numero),pedido_items(*)').eq('status','entregado').gte('created_at',hoy).order('created_at',{ascending:false}).limit(20);
+  const {data:historial}=await sb.from('pedidos').select('*,mesas(numero),pedido_items(*)').in('status',['entregado','cerrado']).gte('created_at',hoy).order('created_at',{ascending:false}).limit(30);
   const hlist=document.getElementById('historial-cocina');
   if(hlist){
     if(!historial?.length){ hlist.innerHTML='<div style="font-size:12px;color:var(--text3);padding:8px 0">Sin pedidos entregados aún hoy</div>'; }
@@ -1022,7 +1033,7 @@ async function renderCocina(){
         <div class="hist-cocina-item">
           <div class="hci-time">${new Date(p.created_at).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})}</div>
           <div class="hci-info">
-            <div class="hci-mesa">Mesa ${p.mesas.numero} <span style="color:var(--green);font-size:11px">✅ Entregado</span></div>
+            <div class="hci-mesa">Mesa ${p.mesas?.numero||'?'} <span style="color:${p.status==='cerrado'?'var(--blue)':'var(--green)'};font-size:11px">${p.status==='cerrado'?'💰 Cobrado':'✅ Entregado'}</span></div>
             <div class="hci-items">${p.pedido_items.map(i=>i.cantidad+'× '+i.nombre).join(' · ')}</div>
             ${p.notas?`<div style="font-size:11px;color:var(--gold);margin-top:2px">📝 ${p.notas}</div>`:''}
             ${p.mesero_nombre?`<div class="hci-user">👤 ${p.mesero_nombre}</div>`:''}
